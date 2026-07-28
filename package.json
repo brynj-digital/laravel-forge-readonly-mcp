@@ -1,0 +1,61 @@
+{
+  "name": "laravel-forge-readonly-mcp",
+  "version": "0.1.0",
+  "description": "Read-only MCP server for the Laravel Forge API. Cannot deploy, restart, restore or delete anything — by construction.",
+  "keywords": [
+    "mcp",
+    "modelcontextprotocol",
+    "laravel",
+    "forge",
+    "read-only",
+    "devops",
+    "claude"
+  ],
+  "license": "MIT",
+  "author": "Bryn Jones",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/brynj-digital/laravel-forge-readonly-mcp.git"
+  },
+  "homepage": "https://github.com/brynj-digital/laravel-forge-readonly-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/brynj-digital/laravel-forge-readonly-mcp/issues"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "laravel-forge-readonly-mcp": "./dist/index.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test --import tsx test/*.test.ts",
+    "generate:paths": "tsx scripts/generate-paths.ts",
+    "check:drift": "tsx scripts/check-drift.ts",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

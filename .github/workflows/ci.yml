@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly, so upstream API drift surfaces on its own rather than when a user
+    # hits a 404. Forge's API reports itself as 0.0.1 and is still moving.
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: ['20', '22', '24']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      # The published bin must start, register its tools and answer an MCP
+      # handshake. Catches the classic stdio break: anything written to stdout
+      # corrupts the protocol, and no unit test would notice.
+      - run: node scripts/smoke.mjs
+        env:
+          FORGE_API_TOKEN: smoke-test-token-not-real
+
+  drift:
+    # Needs the network, and a Forge change should not block an unrelated PR from
+    # merging — it should be visible and fixed deliberately.
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run check:drift
