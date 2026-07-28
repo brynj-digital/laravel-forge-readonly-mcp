@@ -14,13 +14,13 @@ import { containsRedactableField, redact } from '../src/redact.ts';
 /** The shape of a real Forge site payload, trimmed. */
 const SITE_PAYLOAD = {
   data: {
-    id: '742798',
+    id: '200002',
     type: 'sites',
     attributes: {
       name: 'example.test',
       php_version: 'php83',
       quick_deploy: true,
-      deployment_url: 'https://forge.laravel.com/servers/277125/sites/742798/deploy/http?token=SECRET',
+      deployment_url: 'https://forge.laravel.com/servers/100001/sites/200002/deploy/http?token=SECRET',
       healthcheck_url: null,
       maintenance_mode: false,
     },
@@ -42,7 +42,7 @@ describe('redact', () => {
     assert.equal(result.data.attributes.php_version, 'php83');
     assert.equal(result.data.attributes.quick_deploy, true);
     assert.equal(result.data.attributes.maintenance_mode, false);
-    assert.equal(result.data.id, '742798');
+    assert.equal(result.data.id, '200002');
   });
 
   it('leaves a null deployment_url alone, since that is a real fact', () => {
@@ -102,7 +102,7 @@ describe('the client redacts on the way out', () => {
   }
 
   it('strips the trigger URL from an ordinary site read', async () => {
-    const result = await clientFor(base).get({ path: '/orgs/acme/sites/742798' });
+    const result = await clientFor(base).get({ path: '/orgs/acme/sites/200002' });
     assert.equal(containsRedactableField(result), false);
     assert.ok(!JSON.stringify(result).includes('token=SECRET'));
   });
@@ -114,7 +114,7 @@ describe('the client redacts on the way out', () => {
 
   it('passes it through only under --unsafe-allow-secrets', async () => {
     const result = await clientFor({ ...base, allowSecrets: true }).get({
-      path: '/orgs/acme/sites/742798',
+      path: '/orgs/acme/sites/200002',
     });
     assert.ok(JSON.stringify(result).includes('token=SECRET'));
   });
