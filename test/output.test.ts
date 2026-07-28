@@ -93,6 +93,16 @@ describe('unavailableReason', () => {
     assert.match(unavailableReason('=== Empty log file ===') ?? '', /empty/i);
   });
 
+  it('explains a pruned deployment output file', () => {
+    // Verbatim from the live API for every historical deployment checked.
+    const reason = unavailableReason(
+      'cat: /home/forge/.forge/provision-143631166.output: No such file or directory',
+    );
+    assert.ok(reason);
+    assert.match(reason, /deployment_retention/);
+    assert.match(reason, /get_deployment/);
+  });
+
   it('says nothing about an ordinary log', () => {
     assert.equal(unavailableReason('[2026-07-28] production.ERROR: boom'), null);
   });

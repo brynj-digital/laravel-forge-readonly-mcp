@@ -94,6 +94,18 @@ export function unavailableReason(text: string): string | null {
   if (/^\s*===\s*Empty log file\s*===\s*$/i.test(text)) {
     return 'The log file exists but is empty.';
   }
+  // Forge keeps each deployment's output in a file on the server and prunes old
+  // ones (see a site's `deployment_retention`), so `cat` fails for anything past
+  // the retention window. Every historical deployment checked on R3's servers
+  // returned this — without an explanation it reads as a bug in this tool.
+  if (/^\s*cat:\s.*No such file or directory\s*$/im.test(text)) {
+    return (
+      'Forge has no stored output for this run. It keeps each deployment\'s output in a file on ' +
+      "the server and prunes older ones (see the site's `deployment_retention` setting), so only " +
+      'recent deployments have retrievable output. The deployment record itself — status, commit ' +
+      'and timings — is still available from get_deployment.'
+    );
+  }
   return null;
 }
 

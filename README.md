@@ -104,10 +104,16 @@ log/output tool returns the **last 200 lines** by default (failures are at the e
 averaged ~550 characters per line, and one PHP stack-trace line can exceed a thousand. Anything
 dropped is stated at the top of the output, so a truncated log never reads as a complete one.
 
-Forge reads these logs from the server **over SSH at request time**, so a server whose Forge
-access has been revoked returns an SSH error instead of a log. The tools detect that and say so,
-pointing you at `revoked` on the server, rather than surfacing a bare
-`Permission denied (publickey)` that looks like a broken tool.
+Forge also returns HTTP 200 in three cases where there is no log to give, each of which reads as
+a broken tool unless explained. All three are detected and described in the response:
+
+- **The server's Forge access was revoked.** Forge reads logs over SSH *at request time*, so a
+  revoked server yields `Permission denied (publickey)` as the log body. The tools point you at
+  `revoked` on the server.
+- **The deployment's output file was pruned.** Forge stores each deployment's output on the server
+  and deletes older ones per the site's `deployment_retention`, so historical deployments return
+  `cat: …: No such file or directory`. The deployment record itself still works.
+- **The log is empty** (`=== Empty log file ===`).
 
 ## Token scopes: the part worth reading
 
