@@ -63,7 +63,7 @@ model says can change which token, base URL or default organisation is used.
 
 ## Tools
 
-19 named tools for the common reads, plus one escape hatch. Forge publishes **133** GET
+24 named tools for the common reads, plus one escape hatch. Forge publishes **133** GET
 endpoints; mapping them 1:1 would cost 30–50k tokens of JSON schema in your context window
 before you asked anything, so the frequent paths get real tools and `forge_get` covers the rest
 against the same allowlist.
@@ -79,6 +79,11 @@ against the same allowlist.
 | `list_deployments` / `get_deployment` | Deployment history: commit, author, status, duration |
 | `get_deployment_script` | The commands each deploy runs |
 | `get_site_logs` | Application, Nginx access or Nginx error log |
+| `get_deployment_log` | **Why a deploy failed** — the deploy script's output. Needs `site:manage-deploys` |
+| `get_command_output` | Output of a command run from the Commands panel |
+| `get_scheduled_job_output` | Output of a cron job's last run — is the schedule actually succeeding? |
+| `get_server_event_output` | Output of a Forge server event (provisioning, service restart) |
+| `get_background_process_log` | Queue worker / daemon log. Needs `server:create-daemons` |
 | `list_scheduled_jobs` | Cron jobs for a server or one site, with last-run state |
 | `list_background_processes` | Daemons and queue workers, and whether they're running |
 | `get_site_integration` | Is Horizon/Octane/Reverb/Pulse/Inertia/scheduler on? In maintenance mode? |
@@ -89,6 +94,20 @@ against the same allowlist.
 
 List tools take `page_size`, `cursor`, `sort`, `include` and `filter`. Cursors are never followed
 automatically — see [rate limiting](#rate-limiting).
+
+### Log and output tools return the *tail*
+
+Forge offers no range parameter and applies no limit: one real site's application log measured
+**274,503 characters over 500 lines** — about 69,000 tokens in a single response. So every
+log/output tool returns the **last 200 lines** by default (failures are at the end), raisable via
+`tail_lines`, and is additionally capped by character count because line counts lie — that log
+averaged ~550 characters per line, and one PHP stack-trace line can exceed a thousand. Anything
+dropped is stated at the top of the output, so a truncated log never reads as a complete one.
+
+Forge reads these logs from the server **over SSH at request time**, so a server whose Forge
+access has been revoked returns an SSH error instead of a log. The tools detect that and say so,
+pointing you at `revoked` on the server, rather than surfacing a bare
+`Permission denied (publickey)` that looks like a broken tool.
 
 ## Token scopes: the part worth reading
 
@@ -117,9 +136,9 @@ Two are worth it, and the rest mostly aren't:
 | `site:manage-nginx` | 2 — Nginx config | **rewrite the Nginx config** | Skip unless needed |
 | `server:manage-network` | 2 — firewall rules | **change the firewall** | Skip unless needed |
 | `site:manage-security` | 2 | basic-auth rules | Skip |
-| `site:manage-deploys` | 1 — deployment log | **deploy the site** | **Don't** |
+| `site:manage-deploys` | 1 — **the deployment log** | **deploy the site**, rewrite the deploy script (8) | Your call — see below |
+| `server:create-daemons` | 1 — queue worker log | create daemons, enable Horizon/Octane/Pulse (8) | Your call — see below |
 | `server:create-backups` | 2 — backup instances | **restore a backup** | **Don't** |
-| `server:create-daemons` | 1 — process log | create daemons, enable Horizon/Octane/Pulse | Don't |
 | `storage:manage` | 2 | delete storage providers | Don't |
 
 **Suggested token — seven scopes:**
@@ -134,6 +153,21 @@ clearing a log and modifying a domain.
 
 For a token with **literally no write capability**, drop `site:meta` and `server:manage-logs`:
 89 endpoints, but no logs and no domain or certificate visibility.
+
+### The two log scopes that also grant writes
+
+`get_deployment_log` and `get_background_process_log` are the only tools whose scopes grant real
+write power — deploy, and enabling Horizon/Octane/Pulse respectively. There is **no alternative
+source**: a deployment object carries only commit, status and timings, with no output field, and
+Forge gates the log behind the same scope as deploying.
+
+Worth being precise about what granting them does and doesn't change. It does **not** give this
+server, or a model talking to it, any ability to deploy: no write tool exists, the client only
+issues GET, the `deploy-hook` endpoint stays excluded and `deployment_url` stays redacted. What it
+changes is the **token's** capability if the token itself leaks. Whether that trade is worth a
+failed deploy's output is a judgement about your threat model, not something this package should
+make for you — so both tools ship regardless, and simply return a 403 naming the scope when you
+haven't granted it.
 
 Every scope-gated endpoint stays available in this package regardless of what you grant — your
 token's scopes decide, not us. A 403 says which scope was missing, and whether that scope would
@@ -197,6 +231,25 @@ untouched — that legitimately means quick-deploy is off. The general lesson, l
 the live API rather than reading its docs: **for a read-only surface over someone else's API the
 unit of danger is a field, not an endpoint.** Fields travel.
 
+### …and secrets inside log text
+
+The same lesson recurs a layer down, and this one cannot be solved cleanly. This server withholds
+`.../environment` to keep `.env` out of model context — but a **deployment log is the output of a
+deploy script** that may echo environment variables, composer auth tokens turn up in build output,
+and `get_command_output` replays whatever a human chose to run, `cat .env` included. Field-level
+redaction can't help, because the secret is inside a blob of text.
+
+So log and command output additionally passes through a **best-effort scrubber** for
+credential-shaped substrings: `KEY=`/`SECRET:`/`PASSWORD=` assignments, `Authorization: Bearer …`,
+`?token=…`, AWS `AKIA…` ids, `https://user:pass@host`, and `PRIVATE KEY` blocks. Redactions keep
+the key name so the line still reads as a log line and you can see what was withheld.
+
+**This is best-effort and not a guarantee.** Pattern matching over arbitrary log output cannot be
+complete, and it is deliberately narrow — a greedy scrubber that mangled ordinary log lines would
+push people to disable it wholesale, which loses far more than it gains. Treat log output as
+potentially containing secrets regardless. `get_command_output` deserves the most caution of the
+set.
+
 `--unsafe-allow-secrets` re-enables all thirteen endpoints and this field. It's off by default and
 named to be hard to turn on by accident. If you enable it, those values will appear in model
 context and in transcripts and logs wherever they're kept.
@@ -214,7 +267,8 @@ Four independent layers, so no single mistake is sufficient:
    path (`…/deployments/deploy-hook`) collides with a legitimate template
    (`…/deployments/{deployment}`) — in a deny-by-default boundary the denial must win.
 4. **Every response is filtered field-by-field** on the way out, because the endpoint allowlist
-   alone let the deploy trigger URL through inline on ordinary site reads.
+   alone let the deploy trigger URL through inline on ordinary site reads. Log and command text is
+   additionally scrubbed for credential shapes, and bounded in size.
 5. **Your token's scopes**, if you mint it view-only — defence in depth rather than the primary
    control.
 

@@ -17,6 +17,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { ForgeClient, ForgeError, type QueryValue } from './client.js';
 import type { Config } from './config.js';
+import { DEFAULT_TAIL_LINES, MAX_TAIL_LINES, tailOutputFields } from './output.js';
 
 /** Read-only, hits a remote API, and repeat calls with the same args are equivalent. */
 const READ = { readOnlyHint: true, idempotentHint: true, openWorldHint: true } as const;
@@ -58,6 +59,25 @@ const listArgs = {
     .record(z.union([z.string(), z.number(), z.boolean()]))
     .optional()
     .describe('Field filters, e.g. {"name": "acme-web"}. Supported fields vary by endpoint.'),
+};
+
+/**
+ * Size control, shared by every tool that returns log or command text.
+ *
+ * Not cosmetic: one real site's application log measured 274,503 characters
+ * (~69k tokens) in a single response, and Forge offers no range parameter. See
+ * src/output.ts.
+ */
+const tailArgs = {
+  tail_lines: z
+    .number()
+    .int()
+    .positive()
+    .max(MAX_TAIL_LINES)
+    .optional()
+    .describe(
+      `Return only the last N lines, where failures appear (default ${DEFAULT_TAIL_LINES}). Output is additionally capped by character count, so a very long single line cannot flood the response.`,
+    ),
 };
 
 interface ListArgs {
@@ -118,6 +138,21 @@ export function registerTools(server: McpServer, client: ForgeClient, config: Co
     client.get<Json>({
       path: ForgeClient.buildPath(template, params),
       ...(query ? { query: toQuery(query) } : {}),
+    });
+
+  /**
+   * Fetch a log/output endpoint and bound its size.
+   *
+   * Secret scrubbing already happened in the client (so `forge_get` gets it too);
+   * this adds the tailing, which is per-call and therefore cannot live there.
+   */
+  const getText = async (
+    template: string,
+    params: Record<string, string | number>,
+    lines: number | undefined,
+  ) =>
+    tailOutputFields(await client.get({ path: ForgeClient.buildPath(template, params) }), {
+      lines: lines ?? DEFAULT_TAIL_LINES,
     });
 
   // ---------------------------------------------------------------- orgs, servers
@@ -423,7 +458,7 @@ export function registerTools(server: McpServer, client: ForgeClient, config: Co
     {
       title: 'Get Site Logs',
       description:
-        "Tail a site's logs: the Laravel/application log, or the Nginx access or error log. The first place to look when a site is throwing errors. Requires the server:manage-logs scope (whose only write power is clearing logs).",
+        "Tail a site's logs: the Laravel/application log, or the Nginx access or error log. The first place to look when a site is throwing errors. Returns the END of the log by default (that is where failures are) — raise tail_lines for more. Requires the server:manage-logs scope, whose only write power is clearing logs. Note that Forge reads logs from the server over SSH at request time, so a server whose Forge access has been revoked returns an SSH error instead of a log.",
       inputSchema: {
         organization,
         server: z.union([z.string(), z.number()]).describe('Server id the site is on.'),
@@ -431,6 +466,7 @@ export function registerTools(server: McpServer, client: ForgeClient, config: Co
         type: z
           .enum(['application', 'nginx-access', 'nginx-error'])
           .describe('Which log to read.'),
+        ...tailArgs,
       },
       annotations: READ,
     },
@@ -440,18 +476,211 @@ export function registerTools(server: McpServer, client: ForgeClient, config: Co
         server,
         site,
         type,
+        tail_lines,
       }: {
         organization?: string;
         server: string | number;
         site: string | number;
         type: 'application' | 'nginx-access' | 'nginx-error';
+        tail_lines?: number;
       }) =>
-        client.get({
-          path: ForgeClient.buildPath(
-            `/orgs/{organization}/servers/{server}/sites/{site}/logs/${type}`,
-            { organization: org(slug), server, site },
-          ),
-        }),
+        getText(
+          `/orgs/{organization}/servers/{server}/sites/{site}/logs/${type}`,
+          { organization: org(slug), server, site },
+          tail_lines,
+        ),
+    ),
+  );
+
+  server.registerTool(
+    'get_deployment_log',
+    {
+      title: 'Get Deployment Log',
+      description:
+        "The output of a deployment — the deploy script's stdout/stderr, which is what actually tells you why a deploy failed. Get the deployment id from list_deployments. Requires the site:manage-deploys scope; be aware that scope ALSO grants the ability to deploy, so a strictly read-only token will get a 403 here while list_deployments and get_deployment still work.",
+      inputSchema: {
+        organization,
+        server: z.union([z.string(), z.number()]).describe('Server id the site is on.'),
+        site: z.union([z.string(), z.number()]).describe('Site id from list_sites.'),
+        deployment: z
+          .union([z.string(), z.number()])
+          .describe('Deployment id from list_deployments.'),
+        ...tailArgs,
+      },
+      annotations: READ,
+    },
+    guard(
+      async ({
+        organization: slug,
+        server,
+        site,
+        deployment,
+        tail_lines,
+      }: {
+        organization?: string;
+        server: string | number;
+        site: string | number;
+        deployment: string | number;
+        tail_lines?: number;
+      }) =>
+        getText(
+          '/orgs/{organization}/servers/{server}/sites/{site}/deployments/{deployment}/log',
+          { organization: org(slug), server, site, deployment },
+          tail_lines,
+        ),
+    ),
+  );
+
+  server.registerTool(
+    'get_command_output',
+    {
+      title: 'Get Command Output',
+      description:
+        "The output of a command previously run from a site's Commands panel. Get the command id from list_site_commands. NOTE: this replays whatever a human chose to run, so it is the tool most likely to contain deliberately-dumped secrets — credential-shaped text is scrubbed on a best-effort basis, but do not treat the result as sanitised.",
+      inputSchema: {
+        organization,
+        server: z.union([z.string(), z.number()]).describe('Server id the site is on.'),
+        site: z.union([z.string(), z.number()]).describe('Site id from list_sites.'),
+        command: z.union([z.string(), z.number()]).describe('Command id from list_site_commands.'),
+        ...tailArgs,
+      },
+      annotations: READ,
+    },
+    guard(
+      async ({
+        organization: slug,
+        server,
+        site,
+        command,
+        tail_lines,
+      }: {
+        organization?: string;
+        server: string | number;
+        site: string | number;
+        command: string | number;
+        tail_lines?: number;
+      }) =>
+        getText(
+          '/orgs/{organization}/servers/{server}/sites/{site}/commands/{command}/output',
+          { organization: org(slug), server, site, command },
+          tail_lines,
+        ),
+    ),
+  );
+
+  server.registerTool(
+    'get_scheduled_job_output',
+    {
+      title: 'Get Scheduled Job Output',
+      description:
+        'The output of the most recent run of a scheduled (cron) job — server-level, or site-level if you pass `site`. Use it to see whether a schedule is actually succeeding rather than just firing. Get the job id from list_scheduled_jobs.',
+      inputSchema: {
+        organization,
+        server: z.union([z.string(), z.number()]).describe('Server id from list_servers.'),
+        job: z.union([z.string(), z.number()]).describe('Job id from list_scheduled_jobs.'),
+        site: z
+          .union([z.string(), z.number()])
+          .optional()
+          .describe('Pass this only for a site-level scheduled job; omit for a server-level one.'),
+        ...tailArgs,
+      },
+      annotations: READ,
+    },
+    guard(
+      async ({
+        organization: slug,
+        server,
+        job,
+        site,
+        tail_lines,
+      }: {
+        organization?: string;
+        server: string | number;
+        job: string | number;
+        site?: string | number;
+        tail_lines?: number;
+      }) =>
+        site === undefined
+          ? getText(
+              '/orgs/{organization}/servers/{server}/scheduled-jobs/{job}/output',
+              { organization: org(slug), server, job },
+              tail_lines,
+            )
+          : getText(
+              '/orgs/{organization}/servers/{server}/sites/{site}/scheduled-jobs/{job}/output',
+              { organization: org(slug), server, site, job },
+              tail_lines,
+            ),
+    ),
+  );
+
+  server.registerTool(
+    'get_server_event_output',
+    {
+      title: 'Get Server Event Output',
+      description:
+        'The output of a Forge server event — a provisioning step, service restart or configuration change. Get the event id from list_server_events. Useful for finding out why a Forge-side operation failed.',
+      inputSchema: {
+        organization,
+        server: z.union([z.string(), z.number()]).describe('Server id from list_servers.'),
+        event: z.union([z.string(), z.number()]).describe('Event id from list_server_events.'),
+        ...tailArgs,
+      },
+      annotations: READ,
+    },
+    guard(
+      async ({
+        organization: slug,
+        server,
+        event,
+        tail_lines,
+      }: {
+        organization?: string;
+        server: string | number;
+        event: string | number;
+        tail_lines?: number;
+      }) =>
+        getText(
+          '/orgs/{organization}/servers/{server}/events/{event}/output',
+          { organization: org(slug), server, event },
+          tail_lines,
+        ),
+    ),
+  );
+
+  server.registerTool(
+    'get_background_process_log',
+    {
+      title: 'Get Background Process Log',
+      description:
+        'The log of a daemon or queue worker — what a stuck or crashing queue is actually printing. Get the id from list_background_processes. Requires the server:create-daemons scope; that scope ALSO grants creating daemons and enabling Horizon/Octane/Pulse, so a strictly read-only token will get a 403 here while list_background_processes still works.',
+      inputSchema: {
+        organization,
+        server: z.union([z.string(), z.number()]).describe('Server id from list_servers.'),
+        background_process: z
+          .union([z.string(), z.number()])
+          .describe('Process id from list_background_processes.'),
+        ...tailArgs,
+      },
+      annotations: READ,
+    },
+    guard(
+      async ({
+        organization: slug,
+        server,
+        background_process,
+        tail_lines,
+      }: {
+        organization?: string;
+        server: string | number;
+        background_process: string | number;
+        tail_lines?: number;
+      }) =>
+        getText(
+          '/orgs/{organization}/servers/{server}/background-processes/{backgroundProcess}/log',
+          { organization: org(slug), server, backgroundProcess: background_process },
+          tail_lines,
+        ),
     ),
   );
 
@@ -686,12 +915,27 @@ export function registerTools(server: McpServer, client: ForgeClient, config: Co
           .record(z.union([z.string(), z.number(), z.boolean()]))
           .optional()
           .describe('Query parameters, e.g. {"page[size]": 50, "sort": "-created_at"}.'),
+        ...tailArgs,
       },
       annotations: READ,
     },
     guard(
-      async ({ path, query }: { path: string; query?: Record<string, string | number | boolean> }) =>
-        client.get({ path, ...(query ? { query } : {}) }),
+      async ({
+        path,
+        query,
+        tail_lines,
+      }: {
+        path: string;
+        query?: Record<string, string | number | boolean>;
+        tail_lines?: number;
+      }) => {
+        const result = await client.get({ path, ...(query ? { query } : {}) });
+        // No line limit unless asked — forge_get hits arbitrary endpoints and
+        // tailing an Nginx template or a config file would be wrong. The
+        // character cap in tailOutputFields still applies, so reaching a log
+        // endpoint this way cannot return 270k characters either.
+        return tailOutputFields(result, { lines: tail_lines });
+      },
     ),
   );
 }

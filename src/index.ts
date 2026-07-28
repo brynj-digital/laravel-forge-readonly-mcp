@@ -34,7 +34,7 @@ async function main(): Promise<void> {
   const client = new ForgeClient(config, allowlist);
 
   const server = new McpServer(
-    { name: 'laravel-forge-readonly-mcp', version: '0.1.0' },
+    { name: 'laravel-forge-readonly-mcp', version: '0.2.0' },
     {
       instructions:
         'Read-only access to Laravel Forge: servers, sites, deployments, logs, domains and ' +

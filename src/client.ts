@@ -9,7 +9,7 @@
 import { type Allowlist, matchPath } from './allowlist.js';
 import type { Config } from './config.js';
 import { RateLimiter } from './rate-limit.js';
-import { redact } from './redact.js';
+import { redact, scrubText } from './redact.js';
 
 export class ForgeError extends Error {
   constructor(
@@ -134,8 +134,10 @@ export class ForgeClient {
       try {
         parsed = JSON.parse(text);
       } catch {
-        // A few endpoints (logs, deployment output) return plain text.
-        return text as T;
+        // Forge returns log/output wrapped in JSON today, but a plain-text body
+        // must still be scrubbed — otherwise the one response shape that carries
+        // nothing BUT log text would be the one that skips scrubbing.
+        return (this.config.allowSecrets ? text : scrubText(text)) as T;
       }
       const trimmed = options.trimLinks === false ? parsed : trimLinks(parsed);
       // Field-level redaction runs on EVERY response, including forge_get's.
