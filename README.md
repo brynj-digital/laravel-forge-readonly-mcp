@@ -95,6 +95,10 @@ against the same allowlist.
 List tools take `page_size`, `cursor`, `sort`, `include` and `filter`. Cursors are never followed
 automatically — see [rate limiting](#rate-limiting).
 
+- **Pages hold at most 30 items.** Forge caps `page[size]` at 30 and silently returns 30 for
+  anything larger, so `page_size` is limited to 30 rather than accepting a number Forge will
+  ignore.
+
 ### Log and output tools return the *tail*
 
 Forge offers no range parameter and applies no limit: one real site's application log measured

@@ -34,15 +34,24 @@ function failure(error: unknown) {
   return { content: [{ type: 'text' as const, text: message }], isError: true };
 }
 
+/**
+ * Forge's real page cap. Not in the OpenAPI spec (which only gives the default),
+ * measured instead: sizes 2 and 3 are honoured, 50, 60 and 100 all come back as
+ * 30 with `meta.per_page: 30` and no error.
+ */
+const FORGE_MAX_PAGE_SIZE = 30;
+
 /** Shared pagination/query arguments, kept identical across list tools. */
 const listArgs = {
   page_size: z
     .number()
     .int()
     .positive()
-    .max(100)
+    .max(FORGE_MAX_PAGE_SIZE)
     .optional()
-    .describe('Items per page (Forge default 30).'),
+    .describe(
+      `Items per page, at most ${FORGE_MAX_PAGE_SIZE}. Forge caps pages at ${FORGE_MAX_PAGE_SIZE} and silently returns ${FORGE_MAX_PAGE_SIZE} for anything larger, so read the "page" line and follow the cursor.`,
+    ),
   cursor: z
     .string()
     .optional()
