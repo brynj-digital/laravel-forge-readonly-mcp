@@ -101,6 +101,10 @@ automatically — see [rate limiting](#rate-limiting).
 - **Every list response starts with a `page` line**, such as `30 items on this page, and MORE PAGES
   exist. Pass cursor "…"`, or `2 items. This is the last page.` Forge puts the cursor at the end
   of the response, which on a long page is where a reader stops.
+- **`list_sites` takes `filter: {"name": "acme.com"}`** to find one site without paging.
+- **Sites on revoked servers are marked.** Forge keeps listing a revoked (archived) server's sites
+  as `installed`. With `include="server"`, `list_sites` and `get_site` add `server_revoked: true`
+  to those sites, so a stale namesake is not mistaken for the live site.
 
 ### Log and output tools return the *tail*
 

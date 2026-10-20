@@ -19,6 +19,7 @@ import { ForgeClient, ForgeError, type QueryValue } from './client.js';
 import type { Config } from './config.js';
 import { DEFAULT_TAIL_LINES, MAX_TAIL_LINES, tailOutputFields } from './output.js';
 import { withPageSummary } from './pagination.js';
+import { flagRevokedServers } from './sites.js';
 
 /** Read-only, hits a remote API, and repeat calls with the same args are equivalent. */
 const READ = { readOnlyHint: true, idempotentHint: true, openWorldHint: true } as const;
@@ -271,12 +272,12 @@ export function registerTools(server: McpServer, client: ForgeClient, config: Co
     {
       title: 'List Sites',
       description:
-        'List every site in an organisation across all servers, with its domain, project type, PHP version, repository, deployment and maintenance-mode state. Prefer this over listing sites server by server. Note that the hosting server is NOT included by default — pass include="server" to answer "which server hosts acme.com?" in one call.',
+        'List every site in an organisation across all servers, with its domain, project type, PHP version, repository, deployment and maintenance-mode state. Prefer this over listing sites server by server. Note that the hosting server is NOT included by default — pass include="server" to answer "which server hosts acme.com?" in one call. To find one site, filter by name (filter: {"name": "acme.com"}) rather than paging through them all. Sites on a revoked (archived) server are still listed as installed; with include="server" they are marked server_revoked: true, so a stale namesake is not taken for the live site.',
       inputSchema: { organization, ...listArgs },
       annotations: READ,
     },
     guard(async ({ organization: slug, ...args }: ListArgs & { organization?: string }) =>
-      get('/orgs/{organization}/sites', { organization: org(slug) }, args),
+      flagRevokedServers(await get('/orgs/{organization}/sites', { organization: org(slug) }, args)),
     ),
   );
 
@@ -302,7 +303,10 @@ export function registerTools(server: McpServer, client: ForgeClient, config: Co
         organization?: string;
         site: string | number;
         include?: string;
-      }) => get('/orgs/{organization}/sites/{site}', { organization: org(slug), site }, { include }),
+      }) =>
+        flagRevokedServers(
+          await get('/orgs/{organization}/sites/{site}', { organization: org(slug), site }, { include }),
+        ),
     ),
   );
 
