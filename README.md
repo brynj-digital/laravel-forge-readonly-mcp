@@ -105,6 +105,8 @@ automatically — see [rate limiting](#rate-limiting).
 - **Sites on revoked servers are marked.** Forge keeps listing a revoked (archived) server's sites
   as `installed`. With `include="server"`, `list_sites` and `get_site` add `server_revoked: true`
   to those sites, so a stale namesake is not mistaken for the live site.
+- **`list_deployments` is newest first** unless you pass `sort`. Forge's own default is oldest
+  first, the wrong way round for "did my push deploy?".
 
 ### Log and output tools return the *tail*
 

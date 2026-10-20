@@ -375,7 +375,7 @@ export function registerTools(server: McpServer, client: ForgeClient, config: Co
     {
       title: 'List Deployments',
       description:
-        "A site's deployment history — commit, author, status, duration and timestamps. Use it to find when a site last shipped, or to identify a failed deployment to inspect with get_deployment.",
+        "A site's deployment history — commit, author, status, duration and timestamps. Use it to find when a site last shipped, or to identify a failed deployment to inspect with get_deployment. Newest first unless you pass sort (Forge's own default is oldest first).",
       inputSchema: {
         organization,
         server: z.union([z.string(), z.number()]).describe('Server id the site is on.'),
@@ -394,7 +394,8 @@ export function registerTools(server: McpServer, client: ForgeClient, config: Co
         get(
           '/orgs/{organization}/servers/{server}/sites/{site}/deployments',
           { organization: org(slug), server, site },
-          args,
+          // "did my push deploy?" is the usual question, so the newest come first
+          { ...args, sort: args.sort ?? '-created_at' },
         ),
     ),
   );
