@@ -18,6 +18,8 @@ import { z } from 'zod';
 import { ForgeClient, ForgeError, type QueryValue } from './client.js';
 import type { Config } from './config.js';
 import { DEFAULT_TAIL_LINES, MAX_TAIL_LINES, tailOutputFields } from './output.js';
+import { withPageSummary } from './pagination.js';
+import { flagRevokedServers } from './sites.js';
 
 /** Read-only, hits a remote API, and repeat calls with the same args are equivalent. */
 const READ = { readOnlyHint: true, idempotentHint: true, openWorldHint: true } as const;
@@ -34,15 +36,24 @@ function failure(error: unknown) {
   return { content: [{ type: 'text' as const, text: message }], isError: true };
 }
 
+/**
+ * Forge's real page cap. Not in the OpenAPI spec (which only gives the default),
+ * measured instead: sizes 2 and 3 are honoured, 50, 60 and 100 all come back as
+ * 30 with `meta.per_page: 30` and no error.
+ */
+const FORGE_MAX_PAGE_SIZE = 30;
+
 /** Shared pagination/query arguments, kept identical across list tools. */
 const listArgs = {
   page_size: z
     .number()
     .int()
     .positive()
-    .max(100)
+    .max(FORGE_MAX_PAGE_SIZE)
     .optional()
-    .describe('Items per page (Forge default 30).'),
+    .describe(
+      `Items per page, at most ${FORGE_MAX_PAGE_SIZE}. Forge caps pages at ${FORGE_MAX_PAGE_SIZE} and silently returns ${FORGE_MAX_PAGE_SIZE} for anything larger, so read the "page" line and follow the cursor.`,
+    ),
   cursor: z
     .string()
     .optional()
@@ -128,7 +139,7 @@ export function registerTools(server: McpServer, client: ForgeClient, config: Co
     <A>(handler: (args: A) => Promise<unknown>) =>
     async (args: A) => {
       try {
-        return text(await handler(args));
+        return text(withPageSummary(await handler(args)));
       } catch (error) {
         return failure(error);
       }
@@ -261,12 +272,12 @@ export function registerTools(server: McpServer, client: ForgeClient, config: Co
     {
       title: 'List Sites',
       description:
-        'List every site in an organisation across all servers, with its domain, project type, PHP version, repository, deployment and maintenance-mode state. Prefer this over listing sites server by server. Note that the hosting server is NOT included by default — pass include="server" to answer "which server hosts acme.com?" in one call.',
+        'List every site in an organisation across all servers, with its domain, project type, PHP version, repository, deployment and maintenance-mode state. Prefer this over listing sites server by server. Note that the hosting server is NOT included by default — pass include="server" to answer "which server hosts acme.com?" in one call. To find one site, filter by name (filter: {"name": "acme.com"}) rather than paging through them all. Sites on a revoked (archived) server are still listed as installed; with include="server" they are marked server_revoked: true, so a stale namesake is not taken for the live site.',
       inputSchema: { organization, ...listArgs },
       annotations: READ,
     },
     guard(async ({ organization: slug, ...args }: ListArgs & { organization?: string }) =>
-      get('/orgs/{organization}/sites', { organization: org(slug) }, args),
+      flagRevokedServers(await get('/orgs/{organization}/sites', { organization: org(slug) }, args)),
     ),
   );
 
@@ -292,7 +303,10 @@ export function registerTools(server: McpServer, client: ForgeClient, config: Co
         organization?: string;
         site: string | number;
         include?: string;
-      }) => get('/orgs/{organization}/sites/{site}', { organization: org(slug), site }, { include }),
+      }) =>
+        flagRevokedServers(
+          await get('/orgs/{organization}/sites/{site}', { organization: org(slug), site }, { include }),
+        ),
     ),
   );
 
@@ -361,7 +375,7 @@ export function registerTools(server: McpServer, client: ForgeClient, config: Co
     {
       title: 'List Deployments',
       description:
-        "A site's deployment history — commit, author, status, duration and timestamps. Use it to find when a site last shipped, or to identify a failed deployment to inspect with get_deployment.",
+        "A site's deployment history — commit, author, status, duration and timestamps. Use it to find when a site last shipped, or to identify a failed deployment to inspect with get_deployment. Newest first unless you pass sort (Forge's own default is oldest first).",
       inputSchema: {
         organization,
         server: z.union([z.string(), z.number()]).describe('Server id the site is on.'),
@@ -380,7 +394,8 @@ export function registerTools(server: McpServer, client: ForgeClient, config: Co
         get(
           '/orgs/{organization}/servers/{server}/sites/{site}/deployments',
           { organization: org(slug), server, site },
-          args,
+          // "did my push deploy?" is the usual question, so the newest come first
+          { ...args, sort: args.sort ?? '-created_at' },
         ),
     ),
   );

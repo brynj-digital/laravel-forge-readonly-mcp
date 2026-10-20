@@ -95,6 +95,19 @@ against the same allowlist.
 List tools take `page_size`, `cursor`, `sort`, `include` and `filter`. Cursors are never followed
 automatically — see [rate limiting](#rate-limiting).
 
+- **Pages hold at most 30 items.** Forge caps `page[size]` at 30 and silently returns 30 for
+  anything larger, so `page_size` is limited to 30 rather than accepting a number Forge will
+  ignore.
+- **Every list response starts with a `page` line**, such as `30 items on this page, and MORE PAGES
+  exist. Pass cursor "…"`, or `2 items. This is the last page.` Forge puts the cursor at the end
+  of the response, which on a long page is where a reader stops.
+- **`list_sites` takes `filter: {"name": "acme.com"}`** to find one site without paging.
+- **Sites on revoked servers are marked.** Forge keeps listing a revoked (archived) server's sites
+  as `installed`. With `include="server"`, `list_sites` and `get_site` add `server_revoked: true`
+  to those sites, so a stale namesake is not mistaken for the live site.
+- **`list_deployments` is newest first** unless you pass `sort`. Forge's own default is oldest
+  first, the wrong way round for "did my push deploy?".
+
 ### Log and output tools return the *tail*
 
 Forge offers no range parameter and applies no limit: one real site's application log measured
@@ -291,7 +304,7 @@ also honours `X-RateLimit-*` and `Retry-After`, retrying a 429 twice before givi
 to narrow the request.
 
 Cursors are **never followed automatically**. A single "check every site" call must not be able
-to spend the whole minute, so pagination is explicit: read `meta.next_cursor` and pass it back as
+to spend the whole minute, so pagination is explicit: read the `page` line (or `meta.next_cursor`) and pass the cursor back as
 `cursor`.
 
 ## Development
