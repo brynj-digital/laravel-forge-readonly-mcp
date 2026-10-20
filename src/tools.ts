@@ -18,6 +18,7 @@ import { z } from 'zod';
 import { ForgeClient, ForgeError, type QueryValue } from './client.js';
 import type { Config } from './config.js';
 import { DEFAULT_TAIL_LINES, MAX_TAIL_LINES, tailOutputFields } from './output.js';
+import { withPageSummary } from './pagination.js';
 
 /** Read-only, hits a remote API, and repeat calls with the same args are equivalent. */
 const READ = { readOnlyHint: true, idempotentHint: true, openWorldHint: true } as const;
@@ -137,7 +138,7 @@ export function registerTools(server: McpServer, client: ForgeClient, config: Co
     <A>(handler: (args: A) => Promise<unknown>) =>
     async (args: A) => {
       try {
-        return text(await handler(args));
+        return text(withPageSummary(await handler(args)));
       } catch (error) {
         return failure(error);
       }

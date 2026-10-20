@@ -98,6 +98,9 @@ automatically — see [rate limiting](#rate-limiting).
 - **Pages hold at most 30 items.** Forge caps `page[size]` at 30 and silently returns 30 for
   anything larger, so `page_size` is limited to 30 rather than accepting a number Forge will
   ignore.
+- **Every list response starts with a `page` line**, such as `30 items on this page, and MORE PAGES
+  exist. Pass cursor "…"`, or `2 items. This is the last page.` Forge puts the cursor at the end
+  of the response, which on a long page is where a reader stops.
 
 ### Log and output tools return the *tail*
 
@@ -295,7 +298,7 @@ also honours `X-RateLimit-*` and `Retry-After`, retrying a 429 twice before givi
 to narrow the request.
 
 Cursors are **never followed automatically**. A single "check every site" call must not be able
-to spend the whole minute, so pagination is explicit: read `meta.next_cursor` and pass it back as
+to spend the whole minute, so pagination is explicit: read the `page` line (or `meta.next_cursor`) and pass the cursor back as
 `cursor`.
 
 ## Development
